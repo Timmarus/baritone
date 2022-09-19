@@ -47,6 +47,12 @@ public final class Settings {
      * Allow Baritone to break blocks
      */
     public final Setting<Boolean> allowBreak = new Setting<>(true);
+    
+     /**
+     * Enable smooth aim while mining/building. Aim is updated per tick (20 = 1 second)
+     * set to 1 to disable.
+     */
+    public final Setting<Float> smoothAim = new Setting<>(1f);
 
     /**
      * Blocks that baritone will be allowed to break even with allowBreak set to false
