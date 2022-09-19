@@ -83,6 +83,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
                     this.lastYaw = ctx.player().rotationYaw;
                     ctx.player().rotationYaw = this.target.getYaw();
                 }
+                
                 break;
             }
             case POST: {
