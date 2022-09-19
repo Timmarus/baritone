@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.BiConsumer;
 
+
 /**
  * Baritone's settings. Settings apply to all Baritone instances.
  *
