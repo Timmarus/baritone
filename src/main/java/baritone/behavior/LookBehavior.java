@@ -71,7 +71,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
         switch (event.getState()) {
             case PRE: {
-                if (Baritone.settings().smoothAim.value > 1.01f) {
+                if (Baritone.settings().smoothAim.value > 1.01f && target != null) {
                     float oldYaw = ctx.player().getYRot();
                     float oldPitch = ctx.player().getXRot();
                     float desiredYaw = target.getYaw();
