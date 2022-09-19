@@ -72,18 +72,34 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
         switch (event.getState()) {
             case PRE: {
                 if (this.force) {
-                    float oldYaw = Math.round(ctx.player().getYRot());
-                    float desiredYaw = Math.round(this.target.getYaw());
-                    float oldPitch = Math.round(ctx.player().getXRot());
-                    float desiredPitch = Math.round(this.target.getPitch());
-                    float difYaw = (desiredYaw - oldYaw) / Math.round(Baritone.settings().smoothAim.value + Math.random());
-                    float difPitch = (desiredPitch - oldPitch) / Math.round(Baritone.settings().smoothAim.value + Math.random());
-                    ctx.player().setYRot((ctx.player().getYRot() + difYaw));
-                    ctx.player().setXRot((ctx.player().getXRot() + difPitch));
-                    ctx.player().setYRot((float) (ctx.player().getYRot() + (Math.random() - 0.5) * Baritone.settings().randomLooking.value));
-                    ctx.player().setXRot((float) (ctx.player().getXRot() +  (Math.random() - 0.5) * Baritone.settings().randomLooking.value));
-                    if (desiredPitch == oldPitch && !Baritone.settings().freeLook.value) {
-                        nudgeToLevel();
+                    if (Baritone.settings().smoothAim.value > 1.01f && baritone.getMineProcess().isActive()) {
+                        float oldYaw = ctx.player().getYRot();
+                        float oldPitch = ctx.player().getXRot();
+                        float desiredYaw = target.getYaw();
+                        float desiredPitch = target.getPitch();
+                        float diffYaw = desiredYaw - oldYaw;
+                        float diffPitch = desiredPitch - oldPitch;
+                        float stepYaw = diffYaw / Baritone.settings().smoothAim.value;
+                        float stepPitch = diffPitch / Baritone.settings().smoothAim.value;
+                        float moveDistance = (float) Math.sqrt(diffYaw*diffYaw + diffPitch*diffPitch);
+                        if (moveDistance < Baritone.settings().smoothAimAdditionalAngle.value) {
+                            ctx.player().setYRot(desiredYaw);
+                            ctx.player().setXRot(desiredPitch);
+                        } else {
+                            float ratio = Baritone.settings().smoothAimAdditionalAngle.value / moveDistance;
+                            ctx.player().setYRot(oldYaw + stepYaw + ratio*diffYaw);
+                            ctx.player().setXRot(oldPitch + stepPitch + ratio*diffPitch);
+                        }
+                    } else {
+                        ctx.player().setYRot(this.target.getYaw());
+                        float oldPitch = ctx.player().getXRot();
+                        float desiredPitch = this.target.getPitch();
+                        ctx.player().setXRot(desiredPitch);
+                        ctx.player().setYRot((float) (ctx.player().getYRot() + (Math.random() - 0.5) * Baritone.settings().randomLooking.value));
+                        ctx.player().setXRot((float) (ctx.player().getXRot() +  (Math.random() - 0.5) * Baritone.settings().randomLooking.value));
+                        if (desiredPitch == oldPitch && !Baritone.settings().freeLook.value) {
+                            nudgeToLevel();
+                        }
                     }
                     this.target = null;
                 }
