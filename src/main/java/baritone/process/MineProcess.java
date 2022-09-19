@@ -32,6 +32,9 @@ import baritone.utils.BaritoneProcessHelper;
 import baritone.utils.BlockStateInterface;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Vec3i;
+import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
@@ -42,8 +45,10 @@ import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static baritone.api.pathing.movement.ActionCosts.COST_INF;
+import static baritone.api.utils.HypixelHelper.getWorldFromScoreBoard;
 
 /**
  * Mine blocks of a certain type
@@ -51,9 +56,6 @@ import static baritone.api.pathing.movement.ActionCosts.COST_INF;
  * @author leijurv
  */
 public final class MineProcess extends BaritoneProcessHelper implements IMineProcess {
-
-    private static final int ORE_LOCATIONS_COUNT = 64;
-
     private BlockOptionalMetaLookup filter;
     private List<BlockPos> knownOreLocations;
     private List<BlockPos> blacklist; // inaccessible
@@ -62,6 +64,11 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
     private GoalRunAway branchPointRunaway;
     private int desiredQuantity;
     private int tickCount;
+    private int tickCountForRightClick;
+    private BlockPos currentlyMiningBlockPos;
+    private HypixelHelper.World world;
+    private int worldChangedTicks;
+    private AbstractMap.SimpleEntry<BlockPos, Integer> currentRubySpot;
 
     public MineProcess(Baritone baritone) {
         super(baritone);
@@ -74,6 +81,26 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
 
     @Override
     public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+        if (Baritone.settings().disconnectWhenNotInCrystalHollows.value) {
+            HypixelHelper.World worldFromScoreBoard = getWorldFromScoreBoard(ctx.player().getScoreboard());
+            // sometimes world would only change for a tick or two
+            if (worldFromScoreBoard != world) {
+                worldChangedTicks++;
+                if (worldChangedTicks > 5) {
+                    world = worldFromScoreBoard;
+                    worldChangedTicks = 0;
+                }
+            } else {
+                worldChangedTicks = 0;
+            }
+            if (world != HypixelHelper.World.SKYBLOCK_CRYSTAL_HOLLOWS) {
+                logDirect("Player left Crystal Hallows, disconnecting...");
+                cancel();
+                ctx.world().disconnect();
+                return null;
+            }
+        }
+
         if (desiredQuantity > 0) {
             int curr = ctx.player().getInventory().items.stream()
                     .filter(stack -> filter.has(stack))
@@ -117,26 +144,56 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         if (Baritone.settings().legitMine.value) {
             addNearby();
         }
-        Optional<BlockPos> shaft = curr.stream()
-                .filter(pos -> pos.getX() == ctx.playerFeet().getX() && pos.getZ() == ctx.playerFeet().getZ())
-                .filter(pos -> pos.getY() >= ctx.playerFeet().getY())
+        Optional<BlockPos> shaft;
+        if (Baritone.settings().allowMoveWhileMining.value) {
+            shaft = curr.stream()
+                .filter(pos -> RotationUtils.reachable(ctx, pos).isPresent())
                 .filter(pos -> !(BlockStateInterface.get(ctx, pos).getBlock() instanceof AirBlock)) // after breaking a block, it takes mineGoalUpdateInterval ticks for it to actually update this list =(
-                .min(Comparator.comparingDouble(ctx.playerFeet()::distSqr));
+                .min(Comparator.comparingDouble(new BlockPos(ctx.playerHead())::distSqr));
+        } else {
+            if (currentlyMiningBlockPos != null &&
+                    filter.has(BlockStateInterface.get(ctx, currentlyMiningBlockPos).getBlock())) { // if the block hasn't finished mining
+                shaft = Optional.of(currentlyMiningBlockPos);
+            } else {
+                shaft = curr.stream()
+                    .filter(pos -> filter.has(BlockStateInterface.get(ctx, pos).getBlock())) // after breaking a block, it takes mineGoalUpdateInterval ticks for it to actually update this list =(
+                    .min(Comparator.comparingDouble(new BlockPos(ctx.playerHead())::distSqr)); // since we are not moving, we compare the distances from player's eyes
+            }
+        }
         baritone.getInputOverrideHandler().clearAllKeys();
+        int rightClickEvery = Baritone.settings().rightClickEvery.value;
+        if (rightClickEvery > 0 && tickCountForRightClick++ > rightClickEvery && shaft.isPresent()) {
+            tickCountForRightClick = 0;
+            ctx.player().connection.getConnection().send(new ServerboundUseItemPacket(InteractionHand.MAIN_HAND));
+        }
+        if (Baritone.settings().holdLeftClickWhileMining.value) {
+            baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_LEFT, true);
+        }
+        if (Baritone.settings().sneakWhileMining.value) {
+            baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
+        }
         if (shaft.isPresent() && ctx.player().isOnGround()) {
             BlockPos pos = shaft.get();
             BlockState state = baritone.bsi.get0(pos);
             if (!MovementHelper.avoidBreaking(baritone.bsi, pos.getX(), pos.getY(), pos.getZ(), state)) {
                 Optional<Rotation> rot = RotationUtils.reachable(ctx, pos);
                 if (rot.isPresent() && isSafeToCancel) {
+                    // we only update currentlyMiningBlockPos when the block is reachable
+                    currentlyMiningBlockPos = pos;
                     baritone.getLookBehavior().updateTarget(rot.get(), true);
                     MovementHelper.switchToBestToolFor(ctx, ctx.world().getBlockState(pos));
                     if (ctx.isLookingAt(pos) || ctx.playerRotations().isReallyCloseTo(rot.get())) {
                         baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_LEFT, true);
                     }
+                    if (!Baritone.settings().allowMoveWhileMining.value) {
+                        return new PathingCommand(new GoalComposite(knownOreLocations.stream().map(loc -> new GoalBlock(loc)).toArray(Goal[]::new)), PathingCommandType.CANCEL_AND_SET_GOAL);
+                    }
                     return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
                 }
             }
+        }
+        if (!Baritone.settings().allowMoveWhileMining.value) {
+            return new PathingCommand(new GoalComposite(knownOreLocations.stream().map(loc -> new GoalBlock(loc)).toArray(Goal[]::new)), PathingCommandType.CANCEL_AND_SET_GOAL);
         }
         PathingCommand command = updateGoal();
         if (command == null) {
@@ -146,6 +203,13 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             return null;
         }
         return command;
+    }
+
+    private static boolean blockInSquare(Vec3i block, Vec3i squareCenter, int squareRadius) {
+        return block.getX() >= squareCenter.getX() - squareRadius &&
+                block.getX() <= squareCenter.getX() + squareRadius &&
+                block.getZ() >= squareCenter.getZ() - squareRadius &&
+                block.getZ() <= squareCenter.getZ() + squareRadius;
     }
 
 
@@ -181,7 +245,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         List<BlockPos> locs = knownOreLocations;
         if (!locs.isEmpty()) {
             CalculationContext context = new CalculationContext(baritone);
-            List<BlockPos> locs2 = prune(context, new ArrayList<>(locs), filter, ORE_LOCATIONS_COUNT, blacklist, droppedItemsScan());
+            List<BlockPos> locs2 = prune(context, new ArrayList<>(locs), filter, Baritone.settings().oreLocationScanCount.value, blacklist, droppedItemsScan());
             // can't reassign locs, gotta make a new var locs2, because we use it in a lambda right here, and variables you use in a lambda must be effectively final
             Goal goal = new GoalComposite(locs2.stream().map(loc -> coalesce(loc, locs2, context)).toArray(Goal[]::new));
             knownOreLocations = locs2;
@@ -228,7 +292,10 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             return;
         }
         List<BlockPos> dropped = droppedItemsScan();
-        List<BlockPos> locs = searchWorld(context, filter, ORE_LOCATIONS_COUNT, already, blacklist, dropped);
+        List<BlockPos> locs = searchWorld(context, filter, Baritone.settings().oreLocationScanCount.value, already, blacklist, dropped);
+        if (Baritone.settings().gemstoneMode.value) {
+            locs.removeIf(pos -> !blockInSquare(pos, currentRubySpot.getKey(), currentRubySpot.getValue()));
+        }
         locs.addAll(dropped);
         if (locs.isEmpty() && !Baritone.settings().exploreForBlocks.value) {
             logDirect("No locations for " + filter + " known, cancelling");
@@ -391,7 +458,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                 }
             }
         }
-        knownOreLocations = prune(new CalculationContext(baritone), knownOreLocations, filter, ORE_LOCATIONS_COUNT, blacklist, dropped);
+        knownOreLocations = prune(new CalculationContext(baritone), knownOreLocations, filter, Baritone.settings().oreLocationScanCount.value, blacklist, dropped);
     }
 
     private static List<BlockPos> prune(CalculationContext ctx, List<BlockPos> locs2, BlockOptionalMetaLookup filter, int max, List<BlockPos> blacklist, List<BlockPos> dropped) {
@@ -422,6 +489,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                 })
 
                 .filter(pos -> pos.getY() >= Baritone.settings().minYLevelWhileMining.value + ctx.world.dimensionType().minY())
+                .filter(pos -> pos.getY() <= Baritone.settings().maxYLevelWhileMining.value + ctx.world.dimensionType().minY())
 
                 .filter(pos -> !blacklist.contains(pos))
 
@@ -478,7 +546,30 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         this.branchPoint = null;
         this.branchPointRunaway = null;
         this.anticipatedDrops = new HashMap<>();
+        this.currentlyMiningBlockPos = null;
+        if (Baritone.settings().gemstoneMode.value) {
+            this.world = HypixelHelper.World.SKYBLOCK_CRYSTAL_HOLLOWS;
+        } else {
+            this.world = HypixelHelper.World.UNKNOWN;
+        }
+        this.worldChangedTicks = 0;
         if (filter != null) {
+            List<AbstractMap.SimpleEntry<BlockPos, Integer>> rubySpots =
+                    Baritone.settings().rubySpots.value
+                            .values()
+                            .stream()
+                            .map(i -> new AbstractMap.SimpleEntry<>(new BlockPos(i.get(0), i.get(1), i.get(2)), i.get(3)))
+                            .collect(Collectors.toList());
+
+            if (Baritone.settings().gemstoneMode.value) {
+                this.currentRubySpot = IntStream.range(0, rubySpots.size())
+                        .mapToObj(i -> new AbstractMap.SimpleEntry<>(i, rubySpots.get(i).getKey()))
+                        .min(Comparator.comparingDouble(i -> ctx.playerFeet().distSqr(i.getValue())))
+                        .map(Map.Entry::getKey)
+                        .map(rubySpots::get)
+                        .orElse(null);
+                logDirect("Current ruby spot: " + this.currentRubySpot);
+            }
             rescan(new ArrayList<>(), new CalculationContext(baritone));
         }
     }

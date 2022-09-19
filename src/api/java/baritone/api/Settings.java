@@ -22,10 +22,9 @@ import baritone.api.utils.SettingsUtil;
 import baritone.api.utils.TypeUtils;
 import baritone.api.utils.gui.BaritoneToast;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
-import net.minecraft.network.chat.BaseComponent;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.TextComponent;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -189,6 +188,75 @@ public final class Settings {
     )));
 
     /**
+     * Blocks that Baritone assumes can be instantly mined
+     */
+    public final Setting<List<Block>> assumeInstantMine = new Setting<>(new ArrayList<>(
+            // Leave Empty by Default
+    ));
+
+    /**
+     * Enable smooth aim while mining/building. Aim is updated per tick (20 = 1 second)
+     * set to 1 to disable.
+     */
+    public final Setting<Float> smoothAim = new Setting<>(1f);
+
+    /**
+     * Additional angle the camera will move after camera moving
+     */
+    public final Setting<Float> smoothAimAdditionalAngle = new Setting<>(1f);
+
+    /**
+     * Right click every x ticks, put 0 for not clicking
+     */
+    public final Setting<Integer> rightClickEvery = new Setting<>(0);
+
+    /**
+     * hold left click while mining
+     */
+    public final Setting<Boolean> holdLeftClickWhileMining = new Setting<>(false);
+
+    /**
+     * If turned on, the player won't move while mining
+     */
+    public final Setting<Boolean> allowMoveWhileMining = new Setting<>(true);
+
+    /**
+     * If turned on, the player will sneak while mining
+     */
+    public final Setting<Boolean> sneakWhileMining = new Setting<>(false);
+
+    /**
+     * affecting all sorts of behaviors in favor of gemstone mining
+     */
+    public final Setting<Integer> oreLocationScanCount = new Setting<>(64);
+
+    /**
+     * affecting all sorts of behaviors in favor of gemstone mining
+     */
+    public final Setting<Boolean> gemstoneMode = new Setting<>(false);
+
+    /**
+     * ruby gemstone spots, each map is index->x,y,z,radius (square radius)
+     * was thinking making it List<List<Integer>>, but baritone setting string parser wasn't made with this case in mind
+     */
+    public final Setting<Map<Integer, List<Integer>>> rubySpots = new Setting<>(
+            new HashMap<Integer, List<Integer>>() {{
+                put(1, Arrays.asList(725, 52, 747, 20));
+                put(2, Arrays.asList(228, 52, 407, 26));
+                put(3, Arrays.asList(262, 52, 307, 25));
+                put(4, Arrays.asList(704, 52, 313, 27));
+                put(5, Arrays.asList(484, 52, 264, 25));
+                put(6, Arrays.asList(410, 52, 557, 26));
+                put(7, Arrays.asList(350, 52, 548, 27));
+            }}
+    );
+
+    /**
+     * If turned on, baritone will disconnect when not in crystal hollows while mining
+     */
+    public final Setting<Boolean> disconnectWhenNotInCrystalHollows = new Setting<>(false);
+
+    /**
      * Blocks that Baritone will attempt to avoid (Used in avoidance)
      */
     public final Setting<List<Block>> blocksToAvoid = new Setting<>(new ArrayList<>(
@@ -200,6 +268,13 @@ public final class Settings {
      */
     public final Setting<List<Block>> blocksToDisallowBreaking = new Setting<>(new ArrayList<>(
         // Leave Empty by Default
+    ));
+
+    /**
+     * Blocks that Baritone is allowed to break, unless in blocksToDisallowBreaking
+     */
+    public final Setting<List<Block>> blocksToAllowBreaking = new Setting<>(new ArrayList<>(
+            // Leave Empty by Default
     ));
 
     /**
@@ -805,6 +880,12 @@ public final class Settings {
      * if world has negative y values, subtract the min world height to get the value to put here
      */
     public final Setting<Integer> minYLevelWhileMining = new Setting<>(0);
+
+    /**
+     * Sets the maximum y level whilst mining - set to 0 to turn off.
+     * if world has negative y values, subtract the min world height to get the value to put here
+     */
+    public final Setting<Integer> maxYLevelWhileMining = new Setting<>(0);
 
     /**
      * This will only allow baritone to mine exposed ores, can be used to stop ore obfuscators on servers that use them.
